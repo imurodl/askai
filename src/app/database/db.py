@@ -224,6 +224,24 @@ class Database:
             cur.execute("SELECT 1 FROM questions WHERE url = %s", (url,))
             return cur.fetchone() is not None
 
+    def get_last_incomplete_session(self) -> Optional[Dict[str, Any]]:
+        """Get the most recent incomplete scrape session.
+
+        Returns:
+            Dictionary with session data or None if no incomplete sessions
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM scrape_sessions 
+                WHERE status IN ('running', 'failed')
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
+            )
+            return cur.fetchone()
+
     def get_session_stats(self, session_id: int) -> Optional[Dict[str, Any]]:
         """Get statistics for a scrape session.
 

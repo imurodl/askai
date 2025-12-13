@@ -41,6 +41,63 @@ class Scraper:
         self.session_id: Optional[int] = None
         self.pages_scraped = 0
 
+    def _get_resume_point(self) -> tuple[Optional[int], Optional[str], int]:
+        """Check for incomplete sessions and determine resume point.
+
+        Returns:
+            Tuple of (session_id, start_url, pages_scraped):
+            - If resuming: (existing_session_id, next_url, previous_count)
+            - If starting fresh: (None, None, 0)
+        """
+        incomplete_session = self.db.get_last_incomplete_session()
+
+        if not incomplete_session:
+            logger.info("No incomplete session found, starting fresh")
+            return (None, None, 0)
+
+        session_id = incomplete_session["id"]
+        last_url = incomplete_session["last_scraped_url"]
+        pages_scraped = incomplete_session["pages_scraped"] or 0
+
+        logger.info(
+            f"Found incomplete session {session_id}, last URL: {last_url}, "
+            f"pages scraped: {pages_scraped}"
+        )
+
+        # If no last URL, start from beginning
+        if not last_url:
+            logger.info("No last URL in session, will start from configured START_URL")
+            return (session_id, None, pages_scraped)
+
+        # Fetch the last scraped page to get the next URL
+        try:
+            full_url = urljoin(self.base_url, last_url)
+            logger.debug(f"Fetching last scraped page to find next URL: {full_url}")
+            html_content = self._make_request(full_url)
+
+            if not html_content:
+                logger.warning(
+                    f"Failed to fetch last URL {full_url}, will start from configured START_URL"
+                )
+                return (session_id, None, pages_scraped)
+
+            # Parse to get next URL
+            parser = SavollarParser(html_content)
+            data = parser.extract_all()
+            next_url = data.get("next_url")
+
+            if next_url:
+                logger.info(f"Resuming from next URL: {next_url}")
+                return (session_id, next_url, pages_scraped)
+            else:
+                logger.info("No next URL found, session was at the end of chain")
+                return (session_id, None, pages_scraped)
+
+        except Exception as e:
+            logger.error(f"Error getting resume point: {e}", exc_info=True)
+            logger.info("Will start from configured START_URL")
+            return (session_id, None, pages_scraped)
+
     def _make_request(self, url: str) -> Optional[str]:
         """Make HTTP request with retries.
 
@@ -58,7 +115,7 @@ class Scraper:
 
         for attempt in range(self.max_retries):
             try:
-                logger.info(
+                logger.debug(
                     f"Fetching: {url} (attempt {attempt + 1}/{self.max_retries})"
                 )
                 response = requests.get(
@@ -100,8 +157,8 @@ class Scraper:
         data = parser.extract_all()
 
         # Log extracted data
-        logger.info(f"Extracted: {data['question_title'][:50]}...")
-        logger.info(
+        logger.debug(f"Extracted: {data['question_title'][:50]}...")
+        logger.debug(
             f"View count: {data['view_count']}, Similar questions: {len(data['similar_questions'])}"
         )
 
@@ -119,16 +176,16 @@ class Scraper:
         )
 
         if question_id:
-            logger.info(f"Saved question ID: {question_id}")
+            logger.debug(f"Saved question ID: {question_id}")
 
             # Save related questions
             if data["similar_questions"]:
                 related_count = self.db.insert_related_questions(
                     question_id, data["similar_questions"]
                 )
-                logger.info(f"Saved {related_count} related questions")
+                logger.debug(f"Saved {related_count} related questions")
         else:
-            logger.warning(f"Question already exists: {url}")
+            logger.debug(f"Question already exists: {url}")
 
         return data["next_url"]
 
@@ -141,11 +198,41 @@ class Scraper:
         if start_url:
             self.start_url = start_url
 
-        # Create scrape session
-        self.session_id = self.db.create_scrape_session(self.start_url)
-        logger.info(f"Started scrape session {self.session_id}")
+        # Check for incomplete sessions and determine resume point
+        resume_session_id, resume_url, previous_pages = self._get_resume_point()
 
-        current_url = self.start_url
+        if resume_session_id:
+            # Resume existing session
+            self.session_id = resume_session_id
+            self.pages_scraped = previous_pages
+            logger.info(
+                f"Resuming scrape session {self.session_id} from page {self.pages_scraped}"
+            )
+
+            # Update session status back to running
+            self.db.update_scrape_session(session_id=self.session_id, status="running")
+
+            # Determine starting URL
+            if resume_url:
+                current_url = resume_url
+            else:
+                # No resume URL, start from configured start_url or end
+                if previous_pages == 0:
+                    current_url = self.start_url
+                    logger.info("Starting from configured START_URL")
+                else:
+                    # Session was completed or at end of chain
+                    logger.info("Session was already at the end, marking as completed")
+                    self.db.update_scrape_session(
+                        session_id=self.session_id, status="completed"
+                    )
+                    self.db.close()
+                    return
+        else:
+            # Create new scrape session
+            self.session_id = self.db.create_scrape_session(self.start_url)
+            logger.info(f"Started new scrape session {self.session_id}")
+            current_url = self.start_url
 
         try:
             while current_url:
@@ -162,34 +249,41 @@ class Scraper:
                     logger.warning(f"URL already visited: {full_url}")
                     break
 
-                # Check if URL exists in database
-                if self.db.question_exists(full_url):
-                    logger.info(f"Question already in database: {full_url}")
-                    self.visited_urls.add(full_url)
-                    # We could still try to get the next URL, but for now we'll stop
-                    break
-
-                # Fetch the page
+                # Fetch the page (even if it exists, we need the next URL)
+                logger.info(f"Scraping: {full_url}")
                 html_content = self._make_request(full_url)
                 if not html_content:
                     logger.error(f"Failed to fetch: {full_url}")
                     break
 
-                # Parse and save
-                next_relative_url = self._parse_and_save(full_url, html_content)
+                # Check if URL already exists in database
+                if self.db.question_exists(full_url):
+                    logger.debug(
+                        f"Question already in database: {full_url}, extracting next URL"
+                    )
+                    # Just parse to get next URL, don't save
+                    parser = SavollarParser(html_content)
+                    data = parser.extract_all()
+                    next_relative_url = data.get("next_url")
+                    self.visited_urls.add(full_url)
+                else:
+                    # Parse and save new question
+                    next_relative_url = self._parse_and_save(full_url, html_content)
 
-                # Mark as visited
-                self.visited_urls.add(full_url)
-                self.pages_scraped += 1
+                    # Mark as visited
+                    self.visited_urls.add(full_url)
+                    self.pages_scraped += 1
 
-                # Update session
-                self.db.update_scrape_session(
-                    session_id=self.session_id,
-                    pages_scraped=self.pages_scraped,
-                    last_scraped_url=full_url,
-                )
+                    # Update session
+                    self.db.update_scrape_session(
+                        session_id=self.session_id,
+                        pages_scraped=self.pages_scraped,
+                        last_scraped_url=full_url,
+                    )
 
-                logger.info(f"Progress: {self.pages_scraped} pages scraped")
+                    # Log progress every 50 pages
+                    if self.pages_scraped % 50 == 0:
+                        logger.info(f"Progress: {self.pages_scraped} pages scraped")
 
                 # Check if there's a next URL
                 if not next_relative_url:
