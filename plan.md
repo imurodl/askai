@@ -34,6 +34,7 @@ DinAI is a Retrieval-Augmented Generation (RAG) AI chatbot that provides intelli
 ### 1.2 Web Scraper Core Features
 
 #### Target Website: savollar.islom.uz
+
 - **Starting URL**: `https://savollar.islom.uz/s/2`
 - **Crawl Strategy**: Follow "next question" links sequentially
 - **Rate Limiting**: 1 request per second (respectful scraping)
@@ -41,11 +42,13 @@ DinAI is a Retrieval-Augmented Generation (RAG) AI chatbot that provides intelli
 - **Reference HTML**: See `response-example.html` for actual page structure
 
 #### URL Management
+
 - Start from initial URL (e.g., `/s/2`)
-- Extract "next question" link from HTML: 
+- Extract "next question" link from HTML:
   ```html
-  <div class='col-lg-6'>
-    <a href='/s/3'>  <!-- Extract this href -->
+  <div class="col-lg-6">
+    <a href="/s/3"> <!-- Extract this href --></a>
+  </div>
   ```
 - Follow chain until no "next question" link exists
 - Implement URL validation and deduplication
@@ -53,7 +56,8 @@ DinAI is a Retrieval-Augmented Generation (RAG) AI chatbot that provides intelli
 - Support for robots.txt compliance
 
 #### Content Extraction (from savollar.islom.uz)
-*Reference: See `response-example.html` for complete HTML structure*
+
+_Reference: See `response-example.html` for complete HTML structure_
 
 - **Question Title**: Extract from `<h1>` tag
   ```html
@@ -61,20 +65,22 @@ DinAI is a Retrieval-Augmented Generation (RAG) AI chatbot that provides intelli
   ```
 - **Question Text**: Extract from `<div class='text_in_question'>`
 - **Answer**: Extract from `<div class='answer_in_question'>`
-- **Metadata**: 
+- **Metadata**:
   - Date and time (from `<div class='info_quesiton'>`)
   - Author/Source (e.g., "eski savollar")
   - Category (from breadcrumb: `<nav aria-label="breadcrumb">`)
   - View count
 - **Next Link**: Extract href from `<a href='/s/X'>` inside `<div class='col-lg-6'>` with `next_question_b` class
   ```html
-  <div class='col-lg-6'>
-    <a href='/s/3'>  <!-- This is the next URL -->
+  <div class="col-lg-6">
+    <a href="/s/3"> <!-- This is the next URL --></a>
+  </div>
   ```
 - Clean and normalize Uzbek text (Cyrillic encoding)
 - Handle HTML entities and special characters
 
 #### Rate Limiting & Respectful Scraping
+
 - **Fixed delay**: 1 second between requests (configurable)
 - **Exponential backoff**: If 429 (Too Many Requests) received
 - **User-Agent**: Identify as DinAI bot with contact info
@@ -83,6 +89,7 @@ DinAI is a Retrieval-Augmented Generation (RAG) AI chatbot that provides intelli
 - **Maximum retries**: 3 attempts per URL
 
 #### Error Handling
+
 - Implement retry logic with exponential backoff
 - Handle HTTP errors (404, 500, 503)
 - Handle network timeouts
@@ -182,6 +189,7 @@ CREATE INDEX ON document_chunks USING ivfflat (embedding vector_cosine_ops);
 ### 1.7 Scraper Workflow (savollar.islom.uz)
 
 **Sequential Crawling Process:**
+
 ```
 1. Start: https://savollar.islom.uz/s/2
 2. Fetch page (wait 1 second before request)
@@ -199,6 +207,7 @@ CREATE INDEX ON document_chunks USING ivfflat (embedding vector_cosine_ops);
 ```
 
 **Key Implementation Details:**
+
 - Use Beautiful Soup for HTML parsing
 - Store next question link from: `<div class='col-lg-6'><a href='/s/3'>`
 - Detect end of chain when next link div is missing or empty
