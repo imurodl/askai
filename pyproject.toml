@@ -1,5 +1,5 @@
 [project]
-name = "app"
+name = "askai"
 version = "0.1.0"
 description = "DinAI - RAG AI Chatbot with Web Scraper"
 requires-python = ">=3.9"

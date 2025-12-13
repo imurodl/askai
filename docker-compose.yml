@@ -3,48 +3,48 @@ version: "3.8"
 services:
   postgres:
     image: ankane/pgvector:latest
-    container_name: dinai_postgres
+    container_name: askai_postgres
     environment:
-      POSTGRES_DB: dinai
-      POSTGRES_USER: dinai_user
-      POSTGRES_PASSWORD: dinai_password
+      POSTGRES_DB: askai
+      POSTGRES_USER: askai_user
+      POSTGRES_PASSWORD: askai_password
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dinai_user -d dinai"]
+      test: ["CMD-SHELL", "pg_isready -U askai_user -d askai"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - dinai_network
+      - askai_network
 
   scraper:
     build: .
-    container_name: dinai_scraper
+    container_name: askai_scraper
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: dinai
-      DB_USER: dinai_user
-      DB_PASSWORD: dinai_password
+      DB_NAME: askai
+      DB_USER: askai_user
+      DB_PASSWORD: askai_password
       START_URL: https://savollar.islom.uz/s/2
       CRAWL_DELAY: 1.0
       MAX_PAGES: 0
       REQUEST_TIMEOUT: 30
       MAX_RETRIES: 3
-      USER_AGENT: DinAI-Bot/1.0 (+https://github.com/imurodl/dinai)
+      USER_AGENT: AskAI-Bot/1.0 (+https://github.com/imurodl/askai)
     networks:
-      - dinai_network
+      - askai_network
     restart: unless-stopped
 
 networks:
-  dinai_network:
+  askai_network:
     driver: bridge
 
 volumes:
