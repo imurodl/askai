@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: dinai_postgres
+    environment:
+      POSTGRES_DB: dinai
+      POSTGRES_USER: dinai_user
+      POSTGRES_PASSWORD: dinai_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dinai_user -d dinai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dinai_network
+
+  scraper:
+    build: .
+    container_name: dinai_scraper
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: dinai
+      DB_USER: dinai_user
+      DB_PASSWORD: dinai_password
+      START_URL: https://savollar.islom.uz/s/2
+      CRAWL_DELAY: 1.0
+      MAX_PAGES: 0
+      REQUEST_TIMEOUT: 30
+      MAX_RETRIES: 3
+      USER_AGENT: DinAI-Bot/1.0 (+https://github.com/imurodl/dinai)
+    networks:
+      - dinai_network
+    restart: unless-stopped
+
+networks:
+  dinai_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
