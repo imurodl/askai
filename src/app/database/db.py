@@ -118,7 +118,10 @@ class Database:
         published_date: Optional[str] = None,
         view_count: Optional[int] = None,
     ) -> Optional[int]:
-        """Insert a new question into the database.
+        """Insert a new question or update a placeholder.
+
+        If the URL already exists as a placeholder (is_fully_scraped = false),
+        this method will update it with full data and mark it as fully scraped.
 
         Args:
             session_id: The scrape session ID
@@ -132,34 +135,81 @@ class Database:
             view_count: View count (optional)
 
         Returns:
-            Question ID if successful, None if duplicate
+            Question ID if successful, None if already fully scraped
         """
         conn = self.connect()
         try:
             with conn.cursor() as cur:
+                # Check if URL exists and if it's a placeholder
                 cur.execute(
-                    """
-                    INSERT INTO questions 
-                    (session_id, url, question_title, question_text, answer, 
-                     answer_author, category, published_date, view_count)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (
-                        session_id,
-                        url,
-                        question_title,
-                        question_text,
-                        answer,
-                        answer_author,
-                        category,
-                        published_date,
-                        view_count,
-                    ),
+                    "SELECT id, is_fully_scraped FROM questions WHERE url = %s",
+                    (url,)
                 )
-                question_id = cur.fetchone()["id"]
-                conn.commit()
-                return question_id
+                existing = cur.fetchone()
+
+                if existing:
+                    if existing["is_fully_scraped"]:
+                        # Already fully scraped, don't update
+                        return None
+                    else:
+                        # Update placeholder with full data
+                        cur.execute(
+                            """
+                            UPDATE questions
+                            SET session_id = %s,
+                                question_title = %s,
+                                question_text = %s,
+                                answer = %s,
+                                answer_author = %s,
+                                category = %s,
+                                published_date = %s,
+                                view_count = %s,
+                                is_fully_scraped = true,
+                                scraped_at = NOW()
+                            WHERE id = %s
+                            RETURNING id
+                            """,
+                            (
+                                session_id,
+                                question_title,
+                                question_text,
+                                answer,
+                                answer_author,
+                                category,
+                                published_date,
+                                view_count,
+                                existing["id"],
+                            ),
+                        )
+                        question_id = cur.fetchone()["id"]
+                        conn.commit()
+                        return question_id
+                else:
+                    # Insert new question (marked as fully scraped)
+                    cur.execute(
+                        """
+                        INSERT INTO questions
+                        (session_id, url, question_title, question_text, answer,
+                         answer_author, category, published_date, view_count, is_fully_scraped)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, true)
+                        RETURNING id
+                        """,
+                        (
+                            session_id,
+                            url,
+                            question_title,
+                            question_text,
+                            answer,
+                            answer_author,
+                            category,
+                            published_date,
+                            view_count,
+                        ),
+                    )
+                    question_id = cur.fetchone()["id"]
+                    conn.commit()
+                    return question_id
+
         except psycopg.errors.UniqueViolation:
             conn.rollback()
             return None
@@ -167,14 +217,19 @@ class Database:
     def insert_related_questions(
         self, question_id: int, related_questions: list
     ) -> int:
-        """Insert related questions for a given question.
+        """Insert related questions using many-to-many relationship.
+
+        For each related question:
+        1. Check if it exists in questions table
+        2. If not, create a placeholder with is_fully_scraped = false
+        3. Create relationship in question_relationships junction table
 
         Args:
             question_id: The ID of the main question
             related_questions: List of dicts with 'url', 'title', 'position'
 
         Returns:
-            Number of related questions inserted
+            Number of relationships inserted
         """
         if not related_questions:
             return 0
@@ -185,24 +240,51 @@ class Database:
         try:
             with conn.cursor() as cur:
                 for rq in related_questions:
+                    related_url = rq["url"]
+                    related_title = rq["title"]
+                    position = rq.get("position")
+
+                    # Check if related question exists
+                    cur.execute(
+                        "SELECT id FROM questions WHERE url = %s",
+                        (related_url,)
+                    )
+                    result = cur.fetchone()
+
+                    if result:
+                        # Question exists, get its ID
+                        related_question_id = result["id"]
+                    else:
+                        # Create placeholder question
+                        cur.execute(
+                            """
+                            INSERT INTO questions
+                            (url, question_title, question_text, answer, is_fully_scraped, session_id)
+                            VALUES (%s, %s, '', '', false, 1)
+                            ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
+                            RETURNING id
+                            """,
+                            (related_url, related_title)
+                        )
+                        related_question_id = cur.fetchone()["id"]
+
+                    # Insert relationship into junction table
                     try:
                         cur.execute(
                             """
-                            INSERT INTO related_questions 
-                            (question_id, related_question_url, related_question_title, position)
-                            VALUES (%s, %s, %s, %s)
+                            INSERT INTO question_relationships
+                            (question_id, related_question_id, position)
+                            VALUES (%s, %s, %s)
+                            ON CONFLICT (question_id, related_question_id) DO NOTHING
                             """,
-                            (
-                                question_id,
-                                rq["url"],
-                                rq["title"],
-                                rq.get("position"),
-                            ),
+                            (question_id, related_question_id, position)
                         )
-                        inserted_count += 1
+                        if cur.rowcount > 0:
+                            inserted_count += 1
                     except psycopg.errors.UniqueViolation:
-                        # Skip duplicates
+                        # Skip duplicate relationships
                         pass
+
                 conn.commit()
         except Exception as e:
             conn.rollback()
@@ -223,6 +305,21 @@ class Database:
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM questions WHERE url = %s", (url,))
             return cur.fetchone() is not None
+
+    def get_question_id_by_url(self, url: str) -> Optional[int]:
+        """Get question ID by URL.
+
+        Args:
+            url: The URL to look up
+
+        Returns:
+            Question ID if found, None otherwise
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM questions WHERE url = %s", (url,))
+            result = cur.fetchone()
+            return result["id"] if result else None
 
     def get_last_incomplete_session(self) -> Optional[Dict[str, Any]]:
         """Get the most recent incomplete scrape session.
