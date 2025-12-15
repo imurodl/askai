@@ -1,6 +1,7 @@
 """Web scraper for savollar.islom.uz."""
 
 import os
+import re
 import time
 import logging
 from typing import Optional, Set
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 class Scraper:
     """Web scraper for savollar.islom.uz Q&A pages."""
 
+    MAX_CONSECUTIVE_FAILURES = 50  # Stop after 50 consecutive failed pages
+
     def __init__(self):
         """Initialize scraper with configuration."""
         self.base_url = "https://savollar.islom.uz"
@@ -40,6 +43,26 @@ class Scraper:
         self.visited_urls: Set[str] = set()
         self.session_id: Optional[int] = None
         self.pages_scraped = 0
+        self.consecutive_failures = 0  # Track consecutive parsing failures
+
+    def _increment_url(self, url: str) -> Optional[str]:
+        """Extract question number from URL and increment it.
+
+        Args:
+            url: URL like '/s/1261' or 'https://savollar.islom.uz/s/1261'
+
+        Returns:
+            Incremented URL like '/s/1262', or None if URL format is invalid
+        """
+        # Extract the number from URL pattern /s/NUMBER
+        match = re.search(r'/s/(\d+)', url)
+        if match:
+            current_num = int(match.group(1))
+            next_num = current_num + 1
+            return f"/s/{next_num}"
+
+        logger.warning(f"Could not extract question number from URL: {url}")
+        return None
 
     def _get_resume_point(self) -> tuple[Optional[int], Optional[str], int]:
         """Check for incomplete sessions and determine resume point.
@@ -143,7 +166,7 @@ class Scraper:
 
         return None
 
-    def _parse_and_save(self, url: str, html_content: str) -> Optional[str]:
+    def _parse_and_save(self, url: str, html_content: str) -> tuple[Optional[str], bool]:
         """Parse HTML content and save to database.
 
         Args:
@@ -151,16 +174,27 @@ class Scraper:
             html_content: HTML content to parse
 
         Returns:
-            Next URL to scrape, or None if no next URL
+            Tuple of (next_url, success):
+            - next_url: Next URL to scrape, or None if no next URL
+            - success: True if page was successfully parsed and saved, False otherwise
         """
         parser = SavollarParser(html_content)
         data = parser.extract_all()
 
-        # Log extracted data
-        logger.debug(f"Extracted: {data['question_title'][:50]}...")
+        # Log extracted data safely (handle None values)
+        title = data['question_title'][:50] if data['question_title'] else 'None'
+        logger.debug(f"Extracted: {title}...")
         logger.debug(
             f"View count: {data['view_count']}, Similar questions: {len(data['similar_questions'])}"
         )
+
+        # Validate critical fields - skip saving if question_title is missing
+        if not data['question_title']:
+            logger.warning(
+                f"Skipping page {url} - missing question_title (page structure may be invalid)"
+            )
+            # Still return next_url to continue the chain, but mark as failure
+            return (data["next_url"], False)
 
         # Save to database
         question_id = self.db.insert_question(
@@ -187,7 +221,7 @@ class Scraper:
         else:
             logger.debug(f"Question already exists: {url}")
 
-        return data["next_url"]
+        return (data["next_url"], True)
 
     def scrape(self, start_url: Optional[str] = None):
         """Start scraping from the given URL.
@@ -236,6 +270,13 @@ class Scraper:
 
         try:
             while current_url:
+                # Check if we've reached max consecutive failures
+                if self.consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
+                    logger.error(
+                        f"Reached {self.MAX_CONSECUTIVE_FAILURES} consecutive failures, stopping scraper"
+                    )
+                    break
+
                 # Check if we've reached max pages
                 if self.max_pages > 0 and self.pages_scraped >= self.max_pages:
                     logger.info(f"Reached max pages limit: {self.max_pages}")
@@ -253,8 +294,22 @@ class Scraper:
                 logger.info(f"Scraping: {full_url}")
                 html_content = self._make_request(full_url)
                 if not html_content:
-                    logger.error(f"Failed to fetch: {full_url}")
-                    break
+                    logger.warning(f"Failed to fetch: {full_url}, trying next URL")
+                    self.consecutive_failures += 1
+
+                    # Try incremented URL as fallback
+                    incremented_url = self._increment_url(current_url)
+                    if incremented_url:
+                        logger.info(f"Trying incremented URL: {incremented_url}")
+                        current_url = incremented_url
+                        time.sleep(self.crawl_delay)
+                        continue
+                    else:
+                        logger.error("Could not increment URL, stopping")
+                        break
+
+                # Track if this page was successfully processed
+                page_success = False
 
                 # Check if URL already exists in database
                 if self.db.question_exists(full_url):
@@ -266,31 +321,52 @@ class Scraper:
                     data = parser.extract_all()
                     next_relative_url = data.get("next_url")
                     self.visited_urls.add(full_url)
+                    page_success = True  # Existing page is still a success
                 else:
                     # Parse and save new question
-                    next_relative_url = self._parse_and_save(full_url, html_content)
+                    next_relative_url, page_success = self._parse_and_save(full_url, html_content)
 
                     # Mark as visited
                     self.visited_urls.add(full_url)
-                    self.pages_scraped += 1
 
-                    # Update session
-                    self.db.update_scrape_session(
-                        session_id=self.session_id,
-                        pages_scraped=self.pages_scraped,
-                        last_scraped_url=full_url,
+                    # If successfully parsed, update counters and session
+                    if page_success:
+                        self.pages_scraped += 1
+
+                        # Update session
+                        self.db.update_scrape_session(
+                            session_id=self.session_id,
+                            pages_scraped=self.pages_scraped,
+                            last_scraped_url=full_url,
+                        )
+
+                        # Log progress every 50 pages
+                        if self.pages_scraped % 50 == 0:
+                            logger.info(f"Progress: {self.pages_scraped} pages scraped")
+
+                # Update consecutive failures counter
+                if page_success:
+                    self.consecutive_failures = 0  # Reset on success
+                else:
+                    self.consecutive_failures += 1
+                    logger.warning(
+                        f"Page parsing failed, consecutive failures: {self.consecutive_failures}"
                     )
-
-                    # Log progress every 50 pages
-                    if self.pages_scraped % 50 == 0:
-                        logger.info(f"Progress: {self.pages_scraped} pages scraped")
 
                 # Check if there's a next URL
                 if not next_relative_url:
-                    logger.info("No more pages to scrape (end of chain)")
-                    break
-
-                current_url = next_relative_url
+                    # Try incremented URL as fallback
+                    incremented_url = self._increment_url(current_url)
+                    if incremented_url:
+                        logger.info(
+                            f"No next URL found, trying incremented URL: {incremented_url}"
+                        )
+                        current_url = incremented_url
+                    else:
+                        logger.info("No more pages to scrape (end of chain)")
+                        break
+                else:
+                    current_url = next_relative_url
 
                 # Rate limiting - wait before next request
                 logger.debug(f"Waiting {self.crawl_delay} seconds...")
