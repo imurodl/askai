@@ -239,6 +239,26 @@ class Database:
 
         try:
             with conn.cursor() as cur:
+                # Get the placeholder session ID
+                cur.execute(
+                    "SELECT id FROM scrape_sessions WHERE start_url = %s LIMIT 1",
+                    ("placeholder",)
+                )
+                placeholder_session = cur.fetchone()
+                placeholder_session_id = placeholder_session["id"] if placeholder_session else None
+
+                if not placeholder_session_id:
+                    # Create placeholder session if it doesn't exist
+                    cur.execute(
+                        """
+                        INSERT INTO scrape_sessions (start_url, status, started_at, pages_scraped)
+                        VALUES (%s, %s, NOW(), 0)
+                        RETURNING id
+                        """,
+                        ("placeholder", "completed")
+                    )
+                    placeholder_session_id = cur.fetchone()["id"]
+
                 for rq in related_questions:
                     related_url = rq["url"]
                     related_title = rq["title"]
@@ -260,11 +280,11 @@ class Database:
                             """
                             INSERT INTO questions
                             (url, question_title, question_text, answer, is_fully_scraped, session_id)
-                            VALUES (%s, %s, '', '', false, 1)
+                            VALUES (%s, %s, '', '', false, %s)
                             ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
                             RETURNING id
                             """,
-                            (related_url, related_title)
+                            (related_url, related_title, placeholder_session_id)
                         )
                         related_question_id = cur.fetchone()["id"]
 
