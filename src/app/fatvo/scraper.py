@@ -185,11 +185,16 @@ class FatvoScraper:
             return False
 
         # Map API response to database fields
+        # Convert empty string category_id to None to satisfy foreign key constraint
+        category_id = question.get("category")
+        if category_id == "":
+            category_id = None
+
         result = self.db.insert_fatvo_question(
             question_id=question_id,
             session_id=self.session_id,
             qid=question.get("qid"),
-            category_id=question.get("category"),
+            category_id=category_id,
             title_cyr=question.get("titleCyr"),
             title_lat=question.get("titleLat"),
             question_cyr=question.get("questionCyr"),
