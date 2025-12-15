@@ -37,6 +37,21 @@ class FatvoScraper:
         self.session_id: Optional[int] = None
         self.questions_scraped = 0
 
+    @staticmethod
+    def _clean_text(text: Optional[str]) -> Optional[str]:
+        """Remove NULL bytes from text (PostgreSQL doesn't allow them).
+
+        Args:
+            text: Text to clean
+
+        Returns:
+            Cleaned text or None
+        """
+        if text is None or text == "":
+            return None
+        # Remove NULL bytes that PostgreSQL rejects
+        return text.replace("\x00", "")
+
     def _get_resume_point(self) -> tuple[Optional[int], int]:
         """Check for incomplete sessions and determine resume point.
 
@@ -190,17 +205,18 @@ class FatvoScraper:
         if category_id == "":
             category_id = None
 
+        # Clean all text fields to remove NULL bytes
         result = self.db.insert_fatvo_question(
             question_id=question_id,
             session_id=self.session_id,
             qid=question.get("qid"),
             category_id=category_id,
-            title_cyr=question.get("titleCyr"),
-            title_lat=question.get("titleLat"),
-            question_cyr=question.get("questionCyr"),
-            question_lat=question.get("questionLat"),
-            answer_cyr=question.get("answerCyr"),
-            answer_lat=question.get("answerLat"),
+            title_cyr=self._clean_text(question.get("titleCyr")),
+            title_lat=self._clean_text(question.get("titleLat")),
+            question_cyr=self._clean_text(question.get("questionCyr")),
+            question_lat=self._clean_text(question.get("questionLat")),
+            answer_cyr=self._clean_text(question.get("answerCyr")),
+            answer_lat=self._clean_text(question.get("answerLat")),
             answered_by=question.get("answeredBy"),
             # Handle API typo: "asweredTime" instead of "answeredTime"
             answered_time=question.get("asweredTime") or question.get("answeredTime"),
