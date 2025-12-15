@@ -372,3 +372,188 @@ class Database:
         with conn.cursor() as cur:
             cur.execute("SELECT * FROM scrape_sessions WHERE id = %s", (session_id,))
             return cur.fetchone()
+
+    # ========================================================================
+    # Fatvo.uz Scraper Methods
+    # ========================================================================
+
+    def insert_fatvo_category(
+        self,
+        category_id: str,
+        name_cyr: Optional[str] = None,
+        name_lat: Optional[str] = None,
+        created: Optional[str] = None,
+        updated: Optional[str] = None,
+    ) -> Optional[int]:
+        """Insert a fatvo.uz category.
+
+        Args:
+            category_id: Category ID from API
+            name_cyr: Category name in Cyrillic
+            name_lat: Category name in Latin
+            created: Created timestamp from API
+            updated: Updated timestamp from API
+
+        Returns:
+            Category ID if successful, None if already exists
+        """
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO fatvo_categories
+                    (category_id, name_cyr, name_lat, created, updated)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (category_id, name_cyr, name_lat, created, updated),
+                )
+                result = cur.fetchone()
+                conn.commit()
+                return result["id"] if result else None
+        except psycopg.errors.UniqueViolation:
+            conn.rollback()
+            return None
+
+    def fatvo_category_exists(self, category_id: str) -> bool:
+        """Check if a fatvo.uz category exists.
+
+        Args:
+            category_id: Category ID to check
+
+        Returns:
+            True if exists, False otherwise
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM fatvo_categories WHERE category_id = %s", (category_id,)
+            )
+            return cur.fetchone() is not None
+
+    def insert_fatvo_question(
+        self,
+        question_id: str,
+        session_id: int,
+        qid: Optional[int] = None,
+        category_id: Optional[str] = None,
+        title_cyr: Optional[str] = None,
+        title_lat: Optional[str] = None,
+        question_cyr: Optional[str] = None,
+        question_lat: Optional[str] = None,
+        answer_cyr: Optional[str] = None,
+        answer_lat: Optional[str] = None,
+        answered_by: Optional[str] = None,
+        answered_time: Optional[str] = None,
+        status: Optional[str] = None,
+        scope: Optional[str] = None,
+        views: Optional[int] = None,
+        created: Optional[str] = None,
+        updated: Optional[str] = None,
+    ) -> Optional[int]:
+        """Insert a fatvo.uz question.
+
+        Args:
+            question_id: Question ID from API (unique identifier)
+            session_id: Scrape session ID
+            qid: Sequential question number from API
+            category_id: Category ID
+            title_cyr: Title in Cyrillic
+            title_lat: Title in Latin
+            question_cyr: Question text in Cyrillic
+            question_lat: Question text in Latin
+            answer_cyr: Answer text in Cyrillic
+            answer_lat: Answer text in Latin
+            answered_by: User ID who answered
+            answered_time: When answered (timestamp)
+            status: Question status (answered, pending, etc.)
+            scope: Scope (public, private)
+            views: View count
+            created: Created timestamp from API
+            updated: Updated timestamp from API
+
+        Returns:
+            Question ID if successful, None if already exists
+        """
+        conn = self.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO fatvo_questions
+                    (question_id, session_id, qid, category_id,
+                     title_cyr, title_lat, question_cyr, question_lat,
+                     answer_cyr, answer_lat, answered_by, answered_time,
+                     status, scope, views, created, updated)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        question_id,
+                        session_id,
+                        qid,
+                        category_id,
+                        title_cyr,
+                        title_lat,
+                        question_cyr,
+                        question_lat,
+                        answer_cyr,
+                        answer_lat,
+                        answered_by,
+                        answered_time,
+                        status,
+                        scope,
+                        views,
+                        created,
+                        updated,
+                    ),
+                )
+                result = cur.fetchone()
+                conn.commit()
+                return result["id"] if result else None
+        except psycopg.errors.UniqueViolation:
+            conn.rollback()
+            return None
+
+    def fatvo_question_exists(self, question_id: str) -> bool:
+        """Check if a fatvo.uz question exists.
+
+        Args:
+            question_id: Question ID to check
+
+        Returns:
+            True if exists, False otherwise
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM fatvo_questions WHERE question_id = %s", (question_id,)
+            )
+            return cur.fetchone() is not None
+
+    def get_fatvo_last_page(self, session_id: int) -> int:
+        """Get the last scraped page number for a fatvo session.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Last page number, or 0 if not found
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT last_scraped_url FROM scrape_sessions WHERE id = %s",
+                (session_id,),
+            )
+            result = cur.fetchone()
+            if result and result["last_scraped_url"]:
+                # Parse "page:15" format
+                last_url = result["last_scraped_url"]
+                if ":" in last_url:
+                    try:
+                        return int(last_url.split(":")[1])
+                    except (ValueError, IndexError):
+                        return 0
+            return 0

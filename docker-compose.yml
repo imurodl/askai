@@ -56,6 +56,30 @@ services:
       - askai_network
     restart: unless-stopped
 
+  fatvo_scraper:
+    build: .
+    container_name: askai_fatvo_scraper
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database config (shared)
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: askai
+      DB_USER: askai_user
+      DB_PASSWORD: askai_password
+
+      # Fatvo-specific config
+      FATVO_PER_PAGE: 100
+      FATVO_CRAWL_DELAY: 0.5
+      FATVO_REQUEST_TIMEOUT: 30
+      FATVO_MAX_RETRIES: 3
+    command: ["uv", "run", "python", "-m", "app.fatvo"]
+    networks:
+      - askai_network
+    restart: unless-stopped
+
 networks:
   askai_network:
     driver: bridge
