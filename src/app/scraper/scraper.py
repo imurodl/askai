@@ -196,10 +196,13 @@ class Scraper:
             # Still return next_url to continue the chain, but mark as failure
             return (data["next_url"], False)
 
+        # Extract relative URL from full URL (store as /s/123 instead of full URL)
+        relative_url = url.replace('https://savollar.islom.uz', '').replace('http://savollar.islom.uz', '')
+
         # Save to database
         question_id = self.db.insert_question(
             session_id=self.session_id,
-            url=url,
+            url=relative_url,
             question_title=data["question_title"] or "",
             question_text=data["question_text"],
             answer=data["answer"] or "",
