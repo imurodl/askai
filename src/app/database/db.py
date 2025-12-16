@@ -351,13 +351,35 @@ class Database:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT * FROM scrape_sessions 
+                SELECT * FROM scrape_sessions
                 WHERE status IN ('running', 'failed')
                 ORDER BY started_at DESC
                 LIMIT 1
                 """
             )
             return cur.fetchone()
+
+    def get_highest_question_url(self) -> Optional[str]:
+        """Get the highest numbered question URL from the database.
+
+        Returns:
+            The URL with the highest number (e.g., '/s/8293') or None if no questions
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            # Extract number from URL pattern /s/NUMBER and find the max
+            # Only consider fully scraped questions (not placeholder related questions)
+            cur.execute(
+                """
+                SELECT url FROM questions
+                WHERE url ~ '^/s/[0-9]+$'
+                AND is_fully_scraped = true
+                ORDER BY CAST(SUBSTRING(url FROM '/s/([0-9]+)') AS INTEGER) DESC
+                LIMIT 1
+                """
+            )
+            result = cur.fetchone()
+            return result["url"] if result else None
 
     def get_session_stats(self, session_id: int) -> Optional[Dict[str, Any]]:
         """Get statistics for a scrape session.

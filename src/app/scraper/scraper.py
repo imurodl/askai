@@ -45,6 +45,13 @@ class Scraper:
         self.pages_scraped = 0
         self.consecutive_failures = 0  # Track consecutive parsing failures
 
+    @staticmethod
+    def _clean_text(text: Optional[str]) -> Optional[str]:
+        """Remove NULL bytes from text (PostgreSQL doesn't allow them)."""
+        if text is None or text == "":
+            return None
+        return text.replace("\x00", "")
+
     def _increment_url(self, url: str) -> Optional[str]:
         """Extract question number from URL and increment it.
 
@@ -70,11 +77,19 @@ class Scraper:
         Returns:
             Tuple of (session_id, start_url, pages_scraped):
             - If resuming: (existing_session_id, next_url, previous_count)
-            - If starting fresh: (None, None, 0)
+            - If starting fresh: (None, start_url, 0) where start_url continues from highest existing
         """
         incomplete_session = self.db.get_last_incomplete_session()
 
         if not incomplete_session:
+            # No incomplete session - check if we should continue from existing data
+            highest_url = self.db.get_highest_question_url()
+            if highest_url:
+                # Continue from the next URL after the highest existing one
+                next_url = self._increment_url(highest_url)
+                if next_url:
+                    logger.info(f"No incomplete session, continuing from highest URL: {highest_url} -> {next_url}")
+                    return (None, next_url, 0)
             logger.info("No incomplete session found, starting fresh")
             return (None, None, 0)
 
@@ -87,8 +102,14 @@ class Scraper:
             f"pages scraped: {pages_scraped}"
         )
 
-        # If no last URL, start from beginning
+        # If no last URL, check if we can continue from highest existing URL
         if not last_url:
+            highest_url = self.db.get_highest_question_url()
+            if highest_url:
+                next_url = self._increment_url(highest_url)
+                if next_url:
+                    logger.info(f"No last URL in session, continuing from highest URL: {highest_url} -> {next_url}")
+                    return (session_id, next_url, pages_scraped)
             logger.info("No last URL in session, will start from configured START_URL")
             return (session_id, None, pages_scraped)
 
@@ -199,15 +220,15 @@ class Scraper:
         # Extract relative URL from full URL (store as /s/123 instead of full URL)
         relative_url = url.replace('https://savollar.islom.uz', '').replace('http://savollar.islom.uz', '')
 
-        # Save to database
+        # Save to database (clean text fields to remove NULL bytes)
         question_id = self.db.insert_question(
             session_id=self.session_id,
             url=relative_url,
-            question_title=data["question_title"] or "",
-            question_text=data["question_text"],
-            answer=data["answer"] or "",
-            answer_author=data["answer_author"],
-            category=data["category"],
+            question_title=self._clean_text(data["question_title"]) or "",
+            question_text=self._clean_text(data["question_text"]),
+            answer=self._clean_text(data["answer"]) or "",
+            answer_author=self._clean_text(data["answer_author"]),
+            category=self._clean_text(data["category"]),
             published_date=data["published_date"],
             view_count=data["view_count"],
         )
@@ -267,9 +288,10 @@ class Scraper:
                     return
         else:
             # Create new scrape session
-            self.session_id = self.db.create_scrape_session(self.start_url)
-            logger.info(f"Started new scrape session {self.session_id}")
-            current_url = self.start_url
+            # Use resume_url if provided (continuing from existing data), otherwise use start_url
+            current_url = resume_url if resume_url else self.start_url
+            self.session_id = self.db.create_scrape_session(current_url)
+            logger.info(f"Started new scrape session {self.session_id} from {current_url}")
 
         try:
             while current_url:
@@ -314,8 +336,9 @@ class Scraper:
                 # Track if this page was successfully processed
                 page_success = False
 
-                # Check if URL already exists in database
-                if self.db.question_exists(full_url):
+                # Check if URL already exists in database (use relative URL to match stored format)
+                relative_url = current_url if current_url.startswith('/') else f"/{current_url}"
+                if self.db.question_exists(relative_url):
                     logger.debug(
                         f"Question already in database: {full_url}, extracting next URL"
                     )
