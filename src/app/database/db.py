@@ -313,17 +313,20 @@ class Database:
         return inserted_count
 
     def question_exists(self, url: str) -> bool:
-        """Check if a question URL already exists in the database.
+        """Check if a question URL already exists and is fully scraped.
 
         Args:
             url: The URL to check
 
         Returns:
-            True if exists, False otherwise
+            True if exists and fully scraped, False otherwise
         """
         conn = self.connect()
         with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM questions WHERE url = %s", (url,))
+            cur.execute(
+                "SELECT 1 FROM questions WHERE url = %s AND is_fully_scraped = true",
+                (url,)
+            )
             return cur.fetchone() is not None
 
     def get_question_id_by_url(self, url: str) -> Optional[int]:
