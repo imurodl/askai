@@ -2,16 +2,17 @@
 
 import os
 from typing import List, Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Configure Gemini API
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Configure Gemini client
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Models
-EMBEDDING_MODEL = "models/text-embedding-004"
+EMBEDDING_MODEL = "text-embedding-004"
 CHAT_MODEL = "gemini-2.0-flash"
 
 
@@ -24,12 +25,12 @@ def generate_embedding(text: str) -> List[float]:
     Returns:
         List of 768 floats representing the embedding
     """
-    result = genai.embed_content(
+    result = client.models.embed_content(
         model=EMBEDDING_MODEL,
-        content=text,
-        task_type="retrieval_document",
+        contents=text,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
     )
-    return result["embedding"]
+    return result.embeddings[0].values
 
 
 def generate_query_embedding(text: str) -> List[float]:
@@ -41,12 +42,12 @@ def generate_query_embedding(text: str) -> List[float]:
     Returns:
         List of 768 floats representing the embedding
     """
-    result = genai.embed_content(
+    result = client.models.embed_content(
         model=EMBEDDING_MODEL,
-        content=text,
-        task_type="retrieval_query",
+        contents=text,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_QUERY"),
     )
-    return result["embedding"]
+    return result.embeddings[0].values
 
 
 def generate_answer(
@@ -68,9 +69,7 @@ def generate_answer(
     context_parts = []
     for i, item in enumerate(context, 1):
         context_parts.append(
-            f"[Manba {i}]\n"
-            f"Savol: {item['title']}\n"
-            f"Javob: {item['answer']}\n"
+            f"[Manba {i}]\n" f"Savol: {item['title']}\n" f"Javob: {item['answer']}\n"
         )
     context_str = "\n---\n".join(context_parts)
 
@@ -80,31 +79,38 @@ Sening vazifang foydalanuvchi savoliga berilgan manbalar asosida aniq va to'liq 
 
 Qoidalar:
 1. Faqat berilgan manbalar asosida javob ber
-2. Agar manbalardan javob topilmasa, "Bu savol bo'yicha ma'lumot topilmadi" de
+2. Agar manbalardan javob topilmasa, "Bu savol bo'yicha ma'lumot topilmadi" deb ayt.
 3. Javobni o'zbek tilida ber
 4. Qisqa va aniq javob ber, lekin muhim ma'lumotlarni qoldirma
 5. Manbalarga ishora qilma, shunchaki javob ber"""
 
-    # Build messages
-    messages = [{"role": "user", "parts": [system_prompt]}]
-
-    # Add history if provided
-    if history:
-        for msg in history:
-            role = "user" if msg["role"] == "user" else "model"
-            messages.append({"role": role, "parts": [msg["content"]]})
-
-    # Add current query with context
+    # Build user message with context
     user_message = f"""Manbalar:
 {context_str}
 
 Foydalanuvchi savoli: {query}"""
 
-    messages.append({"role": "user", "parts": [user_message]})
+    # Build contents for the chat
+    contents = []
+
+    # Add history if provided
+    if history:
+        for msg in history:
+            role = "user" if msg["role"] == "user" else "model"
+            contents.append(
+                types.Content(role=role, parts=[types.Part(text=msg["content"])])
+            )
+
+    # Add current message
+    contents.append(types.Content(role="user", parts=[types.Part(text=user_message)]))
 
     # Generate response
-    model = genai.GenerativeModel(CHAT_MODEL)
-    chat = model.start_chat(history=messages[:-1])
-    response = chat.send_message(messages[-1]["parts"][0])
+    response = client.models.generate_content(
+        model=CHAT_MODEL,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+        ),
+    )
 
     return response.text
