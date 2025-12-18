@@ -34,6 +34,25 @@ services:
       - askai_network
     restart: unless-stopped
 
+  api:
+    build: .
+    container_name: askai_api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: askai
+      DB_USER: askai_user
+      DB_PASSWORD: askai_password
+    ports:
+      - "8000:8000"
+    command: ["uv", "run", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      - askai_network
+    restart: unless-stopped
+
 networks:
   askai_network:
     driver: bridge
