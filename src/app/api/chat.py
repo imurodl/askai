@@ -2,7 +2,12 @@
 
 from typing import List, Optional
 from pydantic import BaseModel
-from ..rag.gemini import generate_query_embedding, generate_answer
+from ..rag.gemini import (
+    generate_query_embedding,
+    generate_answer,
+    classify_message,
+    generate_conversational_response,
+)
 from ..rag.retriever import Retriever
 
 
@@ -43,24 +48,45 @@ class ChatService:
         Returns:
             Dict with answer and sources
         """
+        # Use AI to classify if message needs RAG search
+        if not classify_message(message):
+            # Conversational message - respond without RAG
+            response = generate_conversational_response(message)
+            return {
+                "answer": response,
+                "sources": [],
+            }
+
         # Generate embedding for the query
         query_embedding = generate_query_embedding(message)
 
         # Retrieve relevant Q&A
-        similar = self.retriever.search_similar(query_embedding, limit=5)
+        similar = self.retriever.search_similar(query_embedding, limit=10)
 
-        if not similar:
+        # Debug: print all relevance scores
+        print(f"[DEBUG] Query: {message}")
+        print(f"[DEBUG] Found {len(similar)} results:")
+        for s in similar[:5]:
+            print(f"  - {s['relevance']:.2%}: {s['title'][:50]}...")
+
+        # Filter by minimum relevance threshold
+        MIN_RELEVANCE = 0.65
+        relevant = [s for s in similar if s["relevance"] >= MIN_RELEVANCE][:5]
+
+        if not relevant:
             return {
-                "answer": "Kechirasiz, bu savol bo'yicha ma'lumot topilmadi.",
+                "answer": "Kechirasiz, bu savol bo'yicha aniq ma'lumot topilmadi. ",
                 "sources": [],
             }
 
         # Generate answer using Gemini
         history_dicts = None
         if history:
-            history_dicts = [{"role": h["role"], "content": h["content"]} for h in history]
+            history_dicts = [
+                {"role": h["role"], "content": h["content"]} for h in history
+            ]
 
-        answer = generate_answer(message, similar, history_dicts)
+        answer = generate_answer(message, relevant, history_dicts)
 
         # Build sources list
         sources = [
@@ -69,7 +95,7 @@ class ChatService:
                 "title": item["title"],
                 "relevance": round(item["relevance"], 2),
             }
-            for item in similar
+            for item in relevant
         ]
 
         return {

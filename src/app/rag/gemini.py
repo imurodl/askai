@@ -50,6 +50,73 @@ def generate_query_embedding(text: str) -> List[float]:
     return result.embeddings[0].values
 
 
+def classify_message(message: str) -> bool:
+    """Classify if a message is a question that needs RAG search.
+
+    Args:
+        message: User's message
+
+    Returns:
+        True if message needs RAG search, False if conversational
+    """
+    prompt = f"""Foydalanuvchi xabarini tahlil qil. Bu islomiy savol yoki ma'lumot so'rayotgan savolmi?
+
+Xabar: "{message}"
+
+Agar bu:
+- Islomiy savol (namoz, ro'za, zakot, haj, nikoh, halol-harom va h.k.)
+- Ma'lumot so'rayotgan savol
+- Diniy masala haqida so'rov
+bo'lsa "SAVOL" deb javob ber.
+
+Agar bu:
+- Salomlashish (salom, assalomu alaykum)
+- Xayrlashish (xo'sh, hayr, ko'rishguncha)
+- Oddiy suhbat (rahmat, ok, ha, yo'q, yaxshi)
+- Savol emas, shunchaki gap
+bo'lsa "SUHBAT" deb javob ber.
+
+Faqat bitta so'z bilan javob ber: SAVOL yoki SUHBAT"""
+
+    response = client.models.generate_content(
+        model=CHAT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0,
+        ),
+    )
+
+    result = response.text.strip().upper()
+    return "SAVOL" in result
+
+
+def generate_conversational_response(message: str) -> str:
+    """Generate a conversational response without RAG.
+
+    Args:
+        message: User's conversational message
+
+    Returns:
+        Appropriate conversational response
+    """
+    prompt = f"""Sen do'stona yordamchisan. Foydalanuvchi senga salomlashdi yoki oddiy gap aytdi.
+Unga qisqa va do'stona javob ber. O'zbek tilida javob ber.
+
+Foydalanuvchi: {message}
+
+Qisqa javob ber (1-2 jumla). Agar salomlashsa, salomlash va yordam taklif qil. Agar xayrlashsa, xayrlashtir."""
+
+    response = client.models.generate_content(
+        model=CHAT_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.7,
+        ),
+    )
+
+    return response.text.strip()
+
+
 def generate_answer(
     query: str,
     context: List[dict],
