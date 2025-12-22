@@ -1,78 +1,52 @@
 # AskAI
 
-A RAG-powered AI chatbot for Islamic Q&A content. Scrapes public fatwa data, stores it in PostgreSQL with vector embeddings, and provides semantic search capabilities.
+A RAG-powered AI chatbot for Islamic Q&A content.
 
-**Note**: This project is being developed for personal use.
-
-## Getting Started
+## Local Development
 
 ### Prerequisites
 
-- Docker and Docker Compose
+- Python 3.9+
+- Node.js 18+
+- PostgreSQL with pgvector
 
-### Running the Project
-
-1. **Clone the repository**
+### Setup
 
 ```bash
-git clone https://github.com/imurodl/askai.git
-cd askai
+# Install backend dependencies
+uv venv && source .venv/bin/activate
+uv pip install -r requirements.txt
+
+# Install frontend dependencies
+cd web && npm install && cd ..
 ```
 
-2. **Create environment file**
+### Environment
 
-```bash
-cat > .env << EOF
-# Database Configuration
-DB_HOST=postgres
+Create `.env` file:
+
+```
+DB_HOST=your-db-host
 DB_PORT=5432
-DB_NAME=askai
-DB_USER=user
-DB_PASSWORD=password
-
-# Scraper Configuration
-START_URL=https://your-source-url.com/start
-CRAWL_DELAY=1.0
-MAX_PAGES=0
-REQUEST_TIMEOUT=30
-MAX_RETRIES=3
-USER_AGENT=AskAI-Bot/1.0
-EOF
+DB_NAME=islambot
+DB_USER=your-user
+DB_PASSWORD=your-password
+GEMINI_API_KEY=your-gemini-key
 ```
 
-3. **Start the services**
+### Run
 
 ```bash
-docker-compose up -d
+# Terminal 1: Backend
+.venv/bin/python -m uvicorn src.app.api.main:app --reload --port 8000
+
+# Terminal 2: Frontend
+cd web && npm run dev
 ```
 
-4. **View logs**
-
-```bash
-docker logs askai_scraper -f
-```
-
-5. **Check database**
-
-```bash
-docker exec -it askai_postgres psql -U askai_user -d askai -c "SELECT COUNT(*) FROM questions;"
-```
-
-### Stop the services
-
-```bash
-docker-compose down
-```
+Open http://localhost:5173
 
 ## Tech Stack
 
-- Python 3.11+ with [uv](https://github.com/astral-sh/uv)
-- Beautiful Soup 4, requests
-- PostgreSQL 15+ with pgvector
-- Docker, Docker Compose
-
-## Project Status
-
-**Phase 1**: Web scraper with rate limiting and error handling ✅  
-**Phase 2**: RAG system with embeddings and vector search (planned)  
-**Phase 3**: Chatbot interface (planned)
+- **Backend**: FastAPI, PostgreSQL + pgvector, Gemini API
+- **Frontend**: React, Vite, Tailwind CSS
