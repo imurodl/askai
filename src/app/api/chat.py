@@ -9,6 +9,7 @@ from ..rag.gemini import (
     generate_conversational_response,
 )
 from ..rag.retriever import Retriever
+from ..utils.transliterate import latin_to_cyrillic, is_latin
 
 
 class ChatMessage(BaseModel):
@@ -57,8 +58,14 @@ class ChatService:
                 "sources": [],
             }
 
+        # Convert Latin to Cyrillic for better embedding matching
+        query_text = message
+        if is_latin(message):
+            query_text = latin_to_cyrillic(message)
+            print(f"[DEBUG] Converted: {message} → {query_text}")
+
         # Generate embedding for the query
-        query_embedding = generate_query_embedding(message)
+        query_embedding = generate_query_embedding(query_text)
 
         # Retrieve relevant Q&A
         similar = self.retriever.search_similar(query_embedding, limit=10)
