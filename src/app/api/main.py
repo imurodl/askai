@@ -32,6 +32,19 @@ class ChatRequest(BaseModel):
     history: Optional[List[ChatMessage]] = None
 
 
+class Source(BaseModel):
+    id: int
+    title: str
+    relevance: float
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: List[Source]
+    source_type: str  # "database", "ai_knowledge", "conversational"
+    disclaimer: Optional[str] = None
+
+
 @app.get("/api/search")
 def search_questions(
     q: str = Query(..., min_length=1, description="Search query"),
@@ -67,9 +80,15 @@ def health_check():
     return {"status": "ok"}
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
-    """Chat with the AI assistant using RAG."""
+    """Chat with the AI assistant using RAG.
+
+    Returns answer with source_type:
+    - "database": Answer from DB sources (shows sources)
+    - "ai_knowledge": AI-generated answer (shows disclaimer)
+    - "conversational": Simple greeting/response
+    """
     history_dicts = None
     if request.history:
         history_dicts = [{"role": m.role, "content": m.content} for m in request.history]

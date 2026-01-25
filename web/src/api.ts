@@ -86,6 +86,8 @@ export interface ChatSource {
 export interface ChatResponse {
   answer: string;
   sources: ChatSource[];
+  source_type: 'database' | 'ai_knowledge' | 'conversational';
+  disclaimer?: string;
 }
 
 export async function sendChatMessage(

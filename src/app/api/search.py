@@ -75,6 +75,80 @@ class SearchService:
             "offset": offset,
         }
 
+    def search_by_keywords(
+        self, keywords: List[str], limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Search using multiple keywords with ILIKE.
+
+        Searches question_title and answer fields for any of the keywords.
+        Results are ranked by number of keyword matches.
+
+        Args:
+            keywords: List of Cyrillic keywords to search
+            limit: Max results to return
+
+        Returns:
+            List of matching questions with match_score
+        """
+        if not keywords:
+            return []
+
+        conn = self.db.connect()
+        with conn.cursor() as cur:
+            # Build ILIKE patterns for each keyword
+            patterns = [f"%{kw}%" for kw in keywords]
+
+            # Build dynamic SQL for match scoring
+            # Each keyword match in title = 2 points, in answer = 1 point
+            score_parts = []
+            for i, _ in enumerate(keywords):
+                score_parts.append(
+                    f"CASE WHEN question_title ILIKE %s THEN 2 ELSE 0 END"
+                )
+                score_parts.append(
+                    f"CASE WHEN answer ILIKE %s THEN 1 ELSE 0 END"
+                )
+            score_sql = " + ".join(score_parts)
+
+            # Build WHERE clause - match any keyword in title or answer
+            where_conditions = []
+            for _ in keywords:
+                where_conditions.append("question_title ILIKE %s")
+                where_conditions.append("answer ILIKE %s")
+            where_sql = " OR ".join(where_conditions)
+
+            # Parameters: score patterns + where patterns
+            score_params = []
+            for p in patterns:
+                score_params.extend([p, p])  # title and answer
+
+            where_params = []
+            for p in patterns:
+                where_params.extend([p, p])  # title and answer
+
+            query = f"""
+                SELECT
+                    id,
+                    question_title as title,
+                    question_text as question,
+                    answer,
+                    category,
+                    url,
+                    view_count,
+                    ({score_sql}) as match_score
+                FROM questions
+                WHERE is_fully_scraped = true
+                AND ({where_sql})
+                ORDER BY match_score DESC, view_count DESC NULLS LAST
+                LIMIT %s
+            """
+
+            all_params = tuple(score_params + where_params + [limit])
+            cur.execute(query, all_params)
+            results = cur.fetchall()
+
+        return [dict(r) for r in results]
+
     def get_question_by_id(self, question_id: int) -> Optional[Dict[str, Any]]:
         """Get a question by ID with its related questions.
 

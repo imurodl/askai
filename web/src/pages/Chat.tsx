@@ -5,10 +5,13 @@ import {
   sendChatMessage,
   type ChatMessage as ChatMessageType,
   type ChatSource,
+  type ChatResponse,
 } from '../api';
 
 interface Message extends ChatMessageType {
   sources?: ChatSource[];
+  source_type?: ChatResponse['source_type'];
+  disclaimer?: string;
 }
 
 export function Chat() {
@@ -40,11 +43,13 @@ export function Chat() {
       // Send to API
       const response = await sendChatMessage(text, history);
 
-      // Add assistant message with sources
+      // Add assistant message with sources and metadata
       const assistantMessage: Message = {
         role: 'assistant',
         content: response.answer,
         sources: response.sources,
+        source_type: response.source_type,
+        disclaimer: response.disclaimer,
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } catch (error) {
@@ -103,6 +108,8 @@ export function Chat() {
                   key={index}
                   message={message}
                   sources={message.sources}
+                  sourceType={message.source_type}
+                  disclaimer={message.disclaimer}
                 />
               ))}
               {loading && (

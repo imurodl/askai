@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import type { ChatMessage as ChatMessageType, ChatSource, QuestionDetail } from '../api';
+import type { ChatMessage as ChatMessageType, ChatSource, QuestionDetail, ChatResponse } from '../api';
 import { getQuestion } from '../api';
 
 interface ChatMessageProps {
   message: ChatMessageType;
   sources?: ChatSource[];
+  sourceType?: ChatResponse['source_type'];
+  disclaimer?: string;
 }
 
 interface ModalProps {
@@ -57,11 +59,12 @@ function QuestionModal({ question, onClose }: ModalProps) {
   );
 }
 
-export function ChatMessage({ message, sources }: ChatMessageProps) {
+export function ChatMessage({ message, sources, sourceType, disclaimer }: ChatMessageProps) {
   const [showSources, setShowSources] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionDetail | null>(null);
   const [loadingId, setLoadingId] = useState<number | null>(null);
   const isUser = message.role === 'user';
+  const isAiKnowledge = sourceType === 'ai_knowledge';
 
   const handleSourceClick = async (sourceId: number) => {
     setLoadingId(sourceId);
@@ -87,6 +90,7 @@ export function ChatMessage({ message, sources }: ChatMessageProps) {
         >
           <p className="whitespace-pre-wrap">{message.content}</p>
 
+          {/* Sources section for database answers */}
           {!isUser && sources && sources.length > 0 && (
             <div className="mt-3 pt-3 border-t border-gray-200">
               <button
@@ -117,6 +121,20 @@ export function ChatMessage({ message, sources }: ChatMessageProps) {
                   ))}
                 </ul>
               )}
+            </div>
+          )}
+
+          {/* Disclaimer for AI-generated answers */}
+          {!isUser && isAiKnowledge && disclaimer && (
+            <div className="mt-3 pt-3 border-t border-gray-200">
+              <div className="flex items-start gap-2 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                <span className="text-amber-500 shrink-0">⚠️</span>
+                <p className="text-xs text-amber-700">{disclaimer}</p>
+              </div>
+              <p className="mt-2 text-xs text-gray-400 flex items-center gap-1">
+                <span>🤖</span>
+                <span>AI bilimi asosida</span>
+              </p>
             </div>
           )}
         </div>
