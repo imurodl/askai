@@ -54,6 +54,7 @@ User Query
 - `web/src/api.ts` - API types and functions
 
 ### Config
+- `Makefile` - Dev commands (make dev, make up, etc.)
 - `docker-compose.yml` - Services configuration
 - `.env` - Database and API keys
 
@@ -71,18 +72,24 @@ User Query
 ## Running Locally
 
 ```bash
-# Backend
+# Backend (use make - it excludes .venv from file watching)
 source .venv/bin/activate
-uvicorn src.app.api.main:app --reload --port 8000
+make dev      # hot reload
+make run      # no reload (production-like)
 
 # Frontend
 cd web && npm run dev
 ```
 
+**IMPORTANT:** Never run uvicorn with `--reload` directly. Always use `make dev` which excludes `.venv`, `.git`, and `__pycache__` from file watching. Running `--reload` without exclusions watches 11,000+ files and causes 90%+ CPU usage.
+
 ## Running with Docker
 
 ```bash
-docker compose up -d
+make up       # start services
+make down     # stop services
+make logs     # follow logs
+make db       # connect to PostgreSQL
 ```
 
 **Ports:**
