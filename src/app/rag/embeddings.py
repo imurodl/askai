@@ -1,42 +1,110 @@
-"""Batch embedding generation script for all questions.
+"""Parallel embedding generation with multiple API keys."""
 
-Respects Gemini API free tier limits:
-- ~5-10 RPM (requests per minute)
-- ~100-250 RPD (requests per day)
-
-For 75k questions at 250 RPD = ~300 days
-For 75k questions at 100 RPD = ~750 days
-
-Better approach: Run at ~5 RPM continuously = 300/hour = 7200/day
-At 7200/day, 75k questions = ~10 days
-"""
-
+import os
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
+from dotenv import load_dotenv
 from ..database.db import Database
-from .gemini import generate_embedding
+from .gemini import generate_embedding_with_key
+
+load_dotenv()
+
+# Collect all API keys
+API_KEYS = [
+    os.getenv("GEMINI_API_KEY"),
+    os.getenv("GEMINI_API_KEY_2"),
+    os.getenv("GEMINI_API_KEY_3"),
+    os.getenv("GEMINI_API_KEY_4"),
+    os.getenv("GEMINI_API_KEY_5"),
+]
+API_KEYS = [k for k in API_KEYS if k]  # Filter out None values
+
+# Rate limiting per key (Google allows ~1500 RPM, we use 100 for safety)
+REQUESTS_PER_MINUTE = 100
+DELAY_BETWEEN_REQUESTS = 60 / REQUESTS_PER_MINUTE  # 0.6 seconds
 
 
-# Rate limiting settings for Gemini free tier
-REQUESTS_PER_MINUTE = 5  # Conservative: 5 RPM
-DELAY_BETWEEN_REQUESTS = 60 / REQUESTS_PER_MINUTE  # 12 seconds between requests
-DAILY_LIMIT = 7000  # Stop after this many per day to be safe
+class EmbeddingWorker:
+    """Worker that processes embeddings using one API key."""
+
+    def __init__(self, worker_id: int, api_key: str):
+        self.worker_id = worker_id
+        self.api_key = api_key
+        self.processed = 0
+        self.errors = 0
+        self.rate_limit_hits = 0
+        self.delay = DELAY_BETWEEN_REQUESTS
+        self.lock = threading.Lock()
+
+    def process_question(self, question: dict, db_conn) -> bool:
+        """Process a single question and store embedding."""
+        try:
+            # Combine text for embedding
+            text_parts = [question["question_title"]]
+            if question["question_text"]:
+                text_parts.append(question["question_text"])
+            if question["answer"]:
+                text_parts.append(question["answer"])
+
+            text = "\n".join(text_parts)
+            if len(text) > 10000:
+                text = text[:10000]
+
+            # Generate embedding
+            embedding = generate_embedding_with_key(text, self.api_key)
+
+            # Store in database
+            embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+            with db_conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE questions SET embedding = %s::vector WHERE id = %s",
+                    (embedding_str, question["id"]),
+                )
+            db_conn.commit()
+
+            with self.lock:
+                self.processed += 1
+
+            time.sleep(self.delay)
+            return True
+
+        except Exception as e:
+            error_msg = str(e)
+            with self.lock:
+                self.errors += 1
+
+            if "429" in error_msg or "quota" in error_msg.lower():
+                with self.lock:
+                    self.rate_limit_hits += 1
+                    if self.rate_limit_hits >= 3:
+                        self.delay = min(self.delay * 1.5, 5.0)
+                print(f"[Worker {self.worker_id}] Rate limited, waiting 60s...")
+                time.sleep(60)
+            else:
+                print(f"[Worker {self.worker_id}] Error on {question['id']}: {error_msg}")
+                db_conn.rollback()
+
+            return False
 
 
-def generate_all_embeddings(
+def generate_all_embeddings_parallel(
     start_from_id: Optional[int] = None,
-    daily_limit: int = DAILY_LIMIT,
-    rpm: int = REQUESTS_PER_MINUTE,
+    limit: Optional[int] = None,
 ):
-    """Generate embeddings respecting Gemini API free tier limits.
+    """Generate embeddings using all API keys in parallel.
 
     Args:
         start_from_id: Optional ID to resume from
-        daily_limit: Max requests per day (default 7000)
-        rpm: Requests per minute (default 5)
+        limit: Optional limit on total questions to process
     """
-    delay = 60 / rpm
+    num_workers = len(API_KEYS)
+    if num_workers == 0:
+        print("No API keys found!")
+        return
+
     db = Database()
     conn = db.connect()
 
@@ -51,111 +119,104 @@ def generate_all_embeddings(
         if start_from_id:
             query += f" AND id >= {start_from_id}"
         query += " ORDER BY id"
+        if limit:
+            query += f" LIMIT {limit}"
 
         cur.execute(query)
         questions = cur.fetchall()
 
     total = len(questions)
-    print(f"=" * 50)
-    print(f"Embedding Generation Started")
-    print(f"=" * 50)
+    if total == 0:
+        print("No questions to process!")
+        db.close()
+        return
+
+    print("=" * 60)
+    print("Parallel Embedding Generation")
+    print("=" * 60)
     print(f"Questions to embed: {total}")
-    print(f"Rate limit: {rpm} RPM ({delay:.1f}s delay)")
-    print(f"Daily limit: {daily_limit}")
-    print(f"Estimated time: {total * delay / 3600:.1f} hours")
+    print(f"API keys: {num_workers}")
+    print(f"RPM per key: {REQUESTS_PER_MINUTE}")
+    print(f"Total RPM: ~{num_workers * REQUESTS_PER_MINUTE}")
+    print(f"Estimated time: {total / (num_workers * REQUESTS_PER_MINUTE) / 60:.1f} hours")
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"=" * 50)
+    print("=" * 60)
 
-    processed = 0
-    errors = 0
-    rate_limit_hits = 0
+    # Create workers
+    workers = [EmbeddingWorker(i, key) for i, key in enumerate(API_KEYS)]
+
+    # Create separate DB connections for each worker
+    worker_connections = [Database().connect() for _ in range(num_workers)]
+
+    # Distribute questions to workers (round-robin)
+    question_batches: List[List[dict]] = [[] for _ in range(num_workers)]
+    for i, q in enumerate(questions):
+        question_batches[i % num_workers].append(q)
+
     start_time = time.time()
+    stop_flag = threading.Event()
 
-    for q in questions:
-        # Check daily limit
-        if processed >= daily_limit:
-            print(f"\nDaily limit ({daily_limit}) reached. Run again tomorrow.")
-            print(f"Resume with: --start-from {q['id']}")
-            break
+    def worker_task(worker: EmbeddingWorker, questions: List[dict], conn):
+        for q in questions:
+            if stop_flag.is_set():
+                break
+            worker.process_question(q, conn)
+
+    # Progress monitor
+    def progress_monitor():
+        while not stop_flag.is_set():
+            time.sleep(10)
+            total_processed = sum(w.processed for w in workers)
+            total_errors = sum(w.errors for w in workers)
+            elapsed = time.time() - start_time
+            rate = total_processed / elapsed * 60 if elapsed > 0 else 0
+            remaining = (total - total_processed) / rate / 60 if rate > 0 else 0
+            print(
+                f"Progress: {total_processed}/{total} ({100*total_processed/total:.1f}%) | "
+                f"Rate: {rate:.0f}/min | "
+                f"ETA: {remaining:.1f}h | "
+                f"Errors: {total_errors}"
+            )
+
+    # Start progress monitor
+    monitor_thread = threading.Thread(target=progress_monitor, daemon=True)
+    monitor_thread.start()
+
+    # Run workers in parallel
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [
+            executor.submit(worker_task, workers[i], question_batches[i], worker_connections[i])
+            for i in range(num_workers)
+        ]
 
         try:
-            # Combine text for embedding
-            text_parts = [q["question_title"]]
-            if q["question_text"]:
-                text_parts.append(q["question_text"])
-            if q["answer"]:
-                text_parts.append(q["answer"])
+            for future in as_completed(futures):
+                future.result()
+        except KeyboardInterrupt:
+            print("\nStopping...")
+            stop_flag.set()
 
-            text = "\n".join(text_parts)
+    stop_flag.set()
 
-            # Truncate if too long (Gemini has token limits)
-            if len(text) > 10000:
-                text = text[:10000]
+    # Close worker connections
+    for wc in worker_connections:
+        wc.close()
 
-            # Generate embedding
-            embedding = generate_embedding(text)
-
-            # Store in database
-            embedding_str = "[" + ",".join(map(str, embedding)) + "]"
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE questions SET embedding = %s::vector WHERE id = %s",
-                    (embedding_str, q["id"]),
-                )
-            conn.commit()
-
-            processed += 1
-
-            # Progress update every 50 questions
-            if processed % 50 == 0:
-                elapsed = time.time() - start_time
-                rate = processed / elapsed * 60  # per minute
-                remaining = (total - processed) * delay / 3600
-                print(
-                    f"Progress: {processed}/{total} ({100*processed/total:.1f}%) | "
-                    f"Rate: {rate:.1f}/min | "
-                    f"ETA: {remaining:.1f}h | "
-                    f"Errors: {errors}"
-                )
-
-            # Rate limiting - wait between requests
-            time.sleep(delay)
-
-        except Exception as e:
-            error_msg = str(e)
-            errors += 1
-
-            # Check if rate limited
-            if "429" in error_msg or "quota" in error_msg.lower():
-                rate_limit_hits += 1
-                print(f"\nRate limited! Waiting 60 seconds... (hit #{rate_limit_hits})")
-                time.sleep(60)
-
-                # If hit too many times, increase delay
-                if rate_limit_hits >= 3:
-                    delay = delay * 1.5
-                    print(f"Increasing delay to {delay:.1f}s")
-            else:
-                print(f"Error on question {q['id']}: {error_msg}")
-                conn.rollback()
-
-            # If too many errors, stop
-            if errors > 100:
-                print("Too many errors, stopping")
-                break
-
+    # Final stats
     elapsed = time.time() - start_time
-    print(f"\n" + "=" * 50)
-    print(f"Session Complete")
-    print(f"=" * 50)
-    print(f"Processed: {processed}")
-    print(f"Errors: {errors}")
+    total_processed = sum(w.processed for w in workers)
+    total_errors = sum(w.errors for w in workers)
+
+    print("\n" + "=" * 60)
+    print("Session Complete")
+    print("=" * 60)
+    print(f"Processed: {total_processed}")
+    print(f"Errors: {total_errors}")
     print(f"Time: {elapsed/3600:.2f} hours")
-    print(f"Remaining: {total - processed}")
-    if processed > 0:
-        print(f"Last ID processed: {q['id']}")
-        print(f"To resume: python -m app.rag.embeddings --start-from {q['id']}")
-    print(f"=" * 50)
+    print(f"Actual rate: {total_processed / elapsed * 60:.0f}/min")
+    for i, w in enumerate(workers):
+        print(f"  Worker {i}: {w.processed} processed, {w.errors} errors")
+    print("=" * 60)
 
     db.close()
 
@@ -182,19 +243,20 @@ def check_embedding_status():
     without_emb = result['without_embedding']
     total = with_emb + without_emb
 
-    print(f"=" * 50)
-    print(f"Embedding Status")
-    print(f"=" * 50)
-    print(f"With embeddings:    {with_emb:,} ({100*with_emb/total:.1f}%)")
-    print(f"Without embeddings: {without_emb:,} ({100*without_emb/total:.1f}%)")
+    print("=" * 50)
+    print("Embedding Status")
+    print("=" * 50)
+    print(f"With embeddings:    {with_emb:,} ({100*with_emb/total:.1f}%)" if total > 0 else "No data")
+    print(f"Without embeddings: {without_emb:,} ({100*without_emb/total:.1f}%)" if total > 0 else "")
     print(f"Total:              {total:,}")
-    print(f"=" * 50)
+    print("=" * 50)
 
     if without_emb > 0:
-        # Estimate time remaining
-        hours_at_5rpm = without_emb * 12 / 3600
-        days = hours_at_5rpm / 24
-        print(f"Estimated time to complete: {hours_at_5rpm:.1f} hours ({days:.1f} days)")
+        num_keys = len(API_KEYS)
+        rpm_total = num_keys * REQUESTS_PER_MINUTE
+        hours = without_emb / rpm_total / 60
+        print(f"With {num_keys} API keys at {REQUESTS_PER_MINUTE} RPM each:")
+        print(f"  Estimated time: {hours:.1f} hours")
 
     db.close()
 
@@ -207,11 +269,15 @@ if __name__ == "__main__":
             check_embedding_status()
         elif sys.argv[1] == "--start-from" and len(sys.argv) > 2:
             start_id = int(sys.argv[2])
-            generate_all_embeddings(start_from_id=start_id)
+            generate_all_embeddings_parallel(start_from_id=start_id)
+        elif sys.argv[1] == "--limit" and len(sys.argv) > 2:
+            limit = int(sys.argv[2])
+            generate_all_embeddings_parallel(limit=limit)
         else:
             print("Usage:")
-            print("  python -m app.rag.embeddings          # Start from beginning")
-            print("  python -m app.rag.embeddings status   # Check progress")
+            print("  python -m app.rag.embeddings              # Run with all keys in parallel")
+            print("  python -m app.rag.embeddings status       # Check progress")
             print("  python -m app.rag.embeddings --start-from ID  # Resume from ID")
+            print("  python -m app.rag.embeddings --limit N    # Process only N questions")
     else:
-        generate_all_embeddings()
+        generate_all_embeddings_parallel()

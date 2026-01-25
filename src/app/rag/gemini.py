@@ -33,6 +33,25 @@ def generate_embedding(text: str) -> List[float]:
     return result.embeddings[0].values
 
 
+def generate_embedding_with_key(text: str, api_key: str) -> List[float]:
+    """Generate embedding using a specific API key.
+
+    Args:
+        text: Text to embed
+        api_key: Google API key to use
+
+    Returns:
+        List of 768 floats representing the embedding
+    """
+    custom_client = genai.Client(api_key=api_key)
+    result = custom_client.models.embed_content(
+        model=EMBEDDING_MODEL,
+        contents=text,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+    )
+    return result.embeddings[0].values
+
+
 def generate_query_embedding(text: str) -> List[float]:
     """Generate embedding for a search query.
 
