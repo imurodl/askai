@@ -62,12 +62,28 @@ class ChatService:
             Dict with answer, sources, source_type, and optional disclaimer
         """
         # Step 1: Classify message
-        if not classify_message(message):
+        # If there's history, treat follow-ups as continuations (use AI with context)
+        has_history = history and len(history) > 0
+        is_question = classify_message(message)
+
+        if not is_question and not has_history:
+            # Pure conversational (greeting, etc.) without context
             response = generate_conversational_response(message)
             return {
                 "answer": response,
                 "sources": [],
                 "source_type": "conversational",
+            }
+
+        if not is_question and has_history:
+            # Follow-up request (like "make it shorter") - use AI with history
+            history_dicts = [{"role": h["role"], "content": h["content"]} for h in history]
+            fallback_result = generate_fallback_answer(message, history_dicts)
+            return {
+                "answer": fallback_result["answer"],
+                "sources": [],
+                "source_type": "ai_knowledge",
+                "disclaimer": fallback_result["disclaimer"],
             }
 
         # Step 2: Extract keywords using AI
