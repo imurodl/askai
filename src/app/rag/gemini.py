@@ -231,6 +231,55 @@ Qisqa javob ber (1-2 jumla). Agar salomlashsa, salomlash va yordam taklif qil. A
     return response.text.strip()
 
 
+def generate_conversational_response_with_history(
+    message: str,
+    history: List[dict],
+) -> str:
+    """Generate conversational response with context from history.
+
+    For messages like "rahmat", "qisqartir", etc. that need
+    history context but are not questions needing AI knowledge disclaimer.
+
+    Args:
+        message: User's conversational message
+        history: Conversation history
+
+    Returns:
+        Conversational response without disclaimer
+    """
+    system_prompt = """Sen do'stona yordamchisan. Foydalanuvchi oldingi suhbat davomida
+so'rov yoki izoh qilmoqda. Unga qisqa va do'stona javob ber. O'zbek tilida javob ber.
+
+Agar foydalanuvchi:
+- "rahmat", "tashakkur" desa - minnatdorchilik qabul qil
+- "qisqartir", "qisqaroq" desa - oldingi javobni qisqartir
+- "batafsil", "ko'proq" desa - oldingi javobni kengaytir
+- salomlashsa - salomlash
+- xayrlashsa - xayrlashtir"""
+
+    # Build contents with history
+    contents = []
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append(
+            types.Content(role=role, parts=[types.Part(text=msg["content"])])
+        )
+    contents.append(
+        types.Content(role="user", parts=[types.Part(text=message)])
+    )
+
+    response = client.models.generate_content(
+        model=CHAT_MODEL,
+        contents=contents,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=0.7,
+        ),
+    )
+
+    return response.text.strip()
+
+
 def generate_answer(
     query: str,
     context: List[dict],

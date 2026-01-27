@@ -7,6 +7,7 @@ from ..rag.gemini import (
     generate_answer,
     classify_message,
     generate_conversational_response,
+    generate_conversational_response_with_history,
     extract_search_keywords,
     generate_fallback_answer,
 )
@@ -76,14 +77,13 @@ class ChatService:
             }
 
         if not is_question and has_history:
-            # Follow-up request (like "make it shorter") - use AI with history
+            # Conversational follow-up (like "rahmat", "qisqartir") - NOT an Islamic question
             history_dicts = [{"role": h["role"], "content": h["content"]} for h in history]
-            fallback_result = generate_fallback_answer(message, history_dicts)
+            response = generate_conversational_response_with_history(message, history_dicts)
             return {
-                "answer": fallback_result["answer"],
+                "answer": response,
                 "sources": [],
-                "source_type": "ai_knowledge",
-                "disclaimer": fallback_result["disclaimer"],
+                "source_type": "conversational",
             }
 
         # Step 2: Extract keywords using AI
@@ -167,6 +167,7 @@ class ChatService:
                     "sources": [],
                     "source_type": "ai_knowledge",
                     "disclaimer": fallback_result["disclaimer"],
+                    "_keywords": all_keywords,
                 }
 
             # Sources were helpful - return database answer
@@ -186,6 +187,7 @@ class ChatService:
                 "answer": answer,
                 "sources": sources,
                 "source_type": "database",
+                "_keywords": all_keywords,
             }
 
         # Step 6: No sources at all - AI fallback with disclaimer
@@ -197,4 +199,5 @@ class ChatService:
             "sources": [],
             "source_type": "ai_knowledge",
             "disclaimer": fallback_result["disclaimer"],
+            "_keywords": all_keywords,
         }

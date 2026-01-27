@@ -2,8 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { ChatMessage } from '../components/ChatMessage';
 import { ChatInput } from '../components/ChatInput';
 import { useTheme } from '../hooks/useTheme';
+import { useSession } from '../hooks/useSession';
 import {
   sendChatMessage,
+  getChatHistory,
   type ChatMessage as ChatMessageType,
   type ChatSource,
   type ChatResponse,
@@ -18,8 +20,10 @@ interface Message extends ChatMessageType {
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { theme, toggleTheme } = useTheme();
+  const { sessionId } = useSession();
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -28,6 +32,38 @@ export function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Load chat history on mount
+  useEffect(() => {
+    if (historyLoaded) return;
+
+    async function loadHistory() {
+      try {
+        const { messages: history } = await getChatHistory(sessionId);
+        if (history.length > 0) {
+          const restored: Message[] = [];
+          for (const msg of history) {
+            // User message
+            restored.push({ role: 'user', content: msg.question });
+            // Assistant message
+            restored.push({
+              role: 'assistant',
+              content: msg.answer,
+              sources: msg.sources,
+              source_type: msg.source_type,
+            });
+          }
+          setMessages(restored);
+        }
+      } catch (error) {
+        console.error('Failed to load chat history:', error);
+      } finally {
+        setHistoryLoaded(true);
+      }
+    }
+
+    loadHistory();
+  }, [sessionId, historyLoaded]);
 
   const handleSend = async (text: string) => {
     // Add user message
@@ -42,8 +78,8 @@ export function Chat() {
         content: m.content,
       }));
 
-      // Send to API
-      const response = await sendChatMessage(text, history);
+      // Send to API with session ID
+      const response = await sendChatMessage(text, history, sessionId);
 
       // Add assistant message with sources and metadata
       const assistantMessage: Message = {

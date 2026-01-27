@@ -582,3 +582,120 @@ class Database:
                     except (ValueError, IndexError):
                         return 0
             return 0
+
+    # ========================================================================
+    # Session and Chat History Methods
+    # ========================================================================
+
+    def upsert_session(
+        self,
+        session_id: str,
+        user_agent: Optional[str] = None,
+        device_type: Optional[str] = None,
+        language: Optional[str] = None,
+        ip_address: Optional[str] = None,
+    ) -> bool:
+        """Create or update a session.
+
+        Args:
+            session_id: UUID string from client
+            user_agent: Browser user agent
+            device_type: 'mobile', 'desktop', or 'tablet'
+            language: Browser language code
+            ip_address: Client IP address
+
+        Returns:
+            True if created, False if updated
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO sessions (id, user_agent, device_type, language, ip_address)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    last_active_at = NOW()
+                RETURNING (xmax = 0) AS inserted
+                """,
+                (session_id, user_agent, device_type, language, ip_address),
+            )
+            result = cur.fetchone()
+            conn.commit()
+            return result["inserted"]
+
+    def insert_chat_message(
+        self,
+        session_id: str,
+        question: str,
+        answer: str,
+        source_type: str,
+        sources: Optional[list] = None,
+        keywords: Optional[list] = None,
+        response_time_ms: Optional[int] = None,
+    ) -> int:
+        """Insert a chat message.
+
+        Args:
+            session_id: Session UUID
+            question: User's question text
+            answer: AI response text
+            source_type: 'database', 'ai_knowledge', or 'conversational'
+            sources: List of source dicts [{id, title, relevance}, ...]
+            keywords: List of extracted keywords
+            response_time_ms: Response time in milliseconds
+
+        Returns:
+            Chat message ID
+        """
+        import json
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO chat
+                (session_id, question, answer, source_type, sources, keywords, response_time_ms)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    session_id,
+                    question,
+                    answer,
+                    source_type,
+                    json.dumps(sources or []),
+                    keywords or [],
+                    response_time_ms,
+                ),
+            )
+            result = cur.fetchone()
+            conn.commit()
+            return result["id"]
+
+    def get_chat_history(
+        self,
+        session_id: str,
+        limit: int = 50,
+    ) -> list:
+        """Get chat history for a session.
+
+        Args:
+            session_id: Session UUID
+            limit: Maximum messages to return
+
+        Returns:
+            List of chat messages, oldest first
+        """
+        conn = self.connect()
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, question, answer, source_type, sources, keywords,
+                       response_time_ms, created_at
+                FROM chat
+                WHERE session_id = %s
+                ORDER BY created_at ASC
+                LIMIT %s
+                """,
+                (session_id, limit),
+            )
+            return cur.fetchall()

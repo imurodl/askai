@@ -92,17 +92,47 @@ export interface ChatResponse {
 
 export async function sendChatMessage(
   message: string,
-  history: ChatMessage[] = []
+  history: ChatMessage[] = [],
+  sessionId?: string
 ): Promise<ChatResponse> {
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+  };
+
+  if (sessionId) {
+    headers['X-Session-Id'] = sessionId;
+  }
+
   const response = await fetch(`${API_BASE}/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({ message, history }),
   });
   if (!response.ok) {
     throw new Error('Chat request failed');
+  }
+  return response.json();
+}
+
+// Chat history types
+export interface ChatHistoryMessage {
+  id: number;
+  question: string;
+  answer: string;
+  source_type: 'database' | 'ai_knowledge' | 'conversational';
+  sources: ChatSource[];
+  keywords: string[];
+  response_time_ms: number | null;
+  created_at: string;
+}
+
+export async function getChatHistory(
+  sessionId: string,
+  limit = 50
+): Promise<{ messages: ChatHistoryMessage[] }> {
+  const response = await fetch(`${API_BASE}/chat/history/${sessionId}?limit=${limit}`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch chat history');
   }
   return response.json();
 }

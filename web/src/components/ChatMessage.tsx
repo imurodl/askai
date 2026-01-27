@@ -251,11 +251,13 @@ export function ChatMessage({ message, sources, sourceType, disclaimer }: ChatMe
           )}
 
           {/* Disclaimer for AI-generated answers */}
-          {!isUser && isAiKnowledge && disclaimer && (
+          {!isUser && isAiKnowledge && (
             <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
               <div className="flex items-start gap-2 p-2 bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 rounded-lg">
                 <span className="text-amber-500 shrink-0">⚠️</span>
-                <p className="text-xs text-amber-700 dark:text-amber-300">{disclaimer}</p>
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  {disclaimer || "Bu javob sun'iy intellekt tomonidan berildi. Aniq fatvo uchun mahalliy imom yoki O'zbekiston Musulmonlar Idorasiga murojaat qiling."}
+                </p>
               </div>
               <p className="mt-2 text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
                 <span>🤖</span>
