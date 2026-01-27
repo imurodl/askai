@@ -10,7 +10,7 @@ import { getQuestion } from '../api';
  */
 function formatText(text: string): React.ReactNode[] {
   // Pattern for Arabic text (includes Arabic letters, marks, and common punctuation)
-  const arabicPattern = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+(?:[\s\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u060C\u061B\u061F\u0640\.:,]+[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)*/g;
+  const arabicPattern = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+(?:[\s\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u060C\u061B\u061F\u0640.:,]+[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+)*/g;
 
   // Pattern for nested Q&A markers (case insensitive)
   const qaPattern = /(Савол:|Cавол:|САВОЛ:|ЖАВОБ:|Жавоб:|савол:|жавоб:)/g;

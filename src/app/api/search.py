@@ -103,10 +103,10 @@ class SearchService:
             score_parts = []
             for i, _ in enumerate(keywords):
                 score_parts.append(
-                    f"CASE WHEN question_title ILIKE %s THEN 2 ELSE 0 END"
+                    "CASE WHEN question_title ILIKE %s THEN 2 ELSE 0 END"
                 )
                 score_parts.append(
-                    f"CASE WHEN answer ILIKE %s THEN 1 ELSE 0 END"
+                    "CASE WHEN answer ILIKE %s THEN 1 ELSE 0 END"
                 )
             score_sql = " + ".join(score_parts)
 

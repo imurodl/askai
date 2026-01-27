@@ -15,6 +15,7 @@ export function Search() {
   useEffect(() => {
     if (!query) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset state on query change is valid
     setLoading(true);
     setError(null);
 

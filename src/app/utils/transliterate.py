@@ -1,6 +1,5 @@
 """Uzbek Latin to Cyrillic transliteration."""
 
-import re
 
 # Multi-character mappings (must be processed first)
 MULTI_CHAR_MAP = {

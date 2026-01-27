@@ -12,16 +12,33 @@ export function Question() {
   useEffect(() => {
     if (!id) return;
 
+    let cancelled = false;
+
+    async function fetchQuestion() {
+      try {
+        const data = await getQuestion(Number(id));
+        if (!cancelled) {
+          setQuestion(data);
+          setLoading(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError('Savol topilmadi');
+          setLoading(false);
+          console.error(err);
+        }
+      }
+    }
+
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset state on id change is valid
+    setQuestion(null);
     setLoading(true);
     setError(null);
+    fetchQuestion();
 
-    getQuestion(Number(id))
-      .then(setQuestion)
-      .catch((err) => {
-        setError('Savol topilmadi');
-        console.error(err);
-      })
-      .finally(() => setLoading(false));
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   return (
