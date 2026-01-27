@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: ankane/pgvector:latest
@@ -9,7 +7,7 @@ services:
       POSTGRES_USER: askai_user
       POSTGRES_PASSWORD: askai_password
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./config/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -27,7 +25,7 @@ services:
     depends_on:
       - postgres
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
     networks:
@@ -47,8 +45,19 @@ services:
       DB_USER: askai_user
       DB_PASSWORD: askai_password
     ports:
-      - "8000:8000"
+      - "127.0.0.1:4010:8000"
     command: ["uv", "run", "uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      - askai_network
+    restart: unless-stopped
+
+  web:
+    build: ./web
+    container_name: askai_web
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:4009:80"
     networks:
       - askai_network
     restart: unless-stopped

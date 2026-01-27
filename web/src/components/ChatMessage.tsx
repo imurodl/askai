@@ -149,13 +149,30 @@ function QuestionModal({ question, onClose }: ModalProps) {
             <div className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{formatText(question.answer)}</div>
           </div>
 
-          {question.category && (
-            <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-wrap items-center gap-2">
+            {question.author && (
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 text-sm rounded-full">
+                <span>✍️</span>
+                {question.author}
+              </span>
+            )}
+            {question.category && (
               <span className="inline-block px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-sm rounded-full">
                 {question.category}
               </span>
-            </div>
-          )}
+            )}
+            {question.url && (
+              <a
+                href={question.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-sm rounded-full hover:bg-blue-200 dark:hover:bg-blue-900/70 transition-colors"
+              >
+                <span>🔗</span>
+                islom.uz
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>
